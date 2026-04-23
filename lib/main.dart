@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -93,7 +94,7 @@ class WebAppPage extends StatefulWidget {
   State<WebAppPage> createState() => _WebAppPageState();
 }
 
-class _WebAppPageState extends State<WebAppPage> {
+class _WebAppPageState extends State<WebAppPage> with WidgetsBindingObserver {
   static const _chromeLikeUserAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
@@ -101,6 +102,8 @@ class _WebAppPageState extends State<WebAppPage> {
   late final WebViewController _controller;
   String? _webError;
   bool _isLoading = true;
+  /// [reload]는 첫 로드와 겹치면 iOS에서 크래시가 날 수 있어, 백그라운드에 갔다온 뒤에만 호출한다.
+  bool _sawBackground = false;
 
   WebViewController _createController() {
     final WebViewController c;
@@ -165,10 +168,42 @@ class _WebAppPageState extends State<WebAppPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller = _createController();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadWithPlatformUserAgent();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused) {
+      _sawBackground = true;
+      return;
+    }
+    if (state != AppLifecycleState.resumed || !_sawBackground) {
+      return;
+    }
+    _sawBackground = false;
+    if (!Platform.isIOS || !mounted) return;
+    // 첫 resume 직후와 loadRequest가 겹치지 않게 짧게 늦춘 뒤 갱신
+    unawaited(
+      Future<void>.delayed(const Duration(milliseconds: 300), () async {
+        if (!mounted) return;
+        try {
+          await _controller.reload();
+        } catch (_) {
+          // 이미 WebView가 정리됐거나 로딩 중이면 무시
+        }
+      }),
+    );
   }
 
   Future<void> _applyAndroidWebViewTweaks() async {
