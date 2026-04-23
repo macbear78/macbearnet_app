@@ -1,0 +1,23 @@
+# Local development — MariaDB (Lightsail will use native MariaDB on Ubuntu 24)
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: macbear-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: devroot
+      MARIADB_DATABASE: macbear
+      MARIADB_USER: macbear
+      MARIADB_PASSWORD: macbear_dev
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mariadb_data:
