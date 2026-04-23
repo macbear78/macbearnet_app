@@ -1,8 +1,12 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
@@ -96,11 +100,21 @@ class _WebAppPageState extends State<WebAppPage> {
 
   late final WebViewController _controller;
   String? _webError;
+  bool _isLoading = true;
 
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
+  WebViewController _createController() {
+    final WebViewController c;
+    if (WebViewPlatform.instance is WebKitWebViewPlatform) {
+      c = WebViewController.fromPlatformCreationParams(
+        WebKitWebViewControllerCreationParams
+            .fromPlatformWebViewControllerCreationParams(
+          const PlatformWebViewControllerCreationParams(),
+        ),
+      );
+    } else {
+      c = WebViewController();
+    }
+    c
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
@@ -115,18 +129,26 @@ class _WebAppPageState extends State<WebAppPage> {
           onPageStarted: (_) {
             setState(() {
               _webError = null;
+              _isLoading = true;
+            });
+          },
+          onPageFinished: (_) {
+            setState(() {
+              _isLoading = false;
             });
           },
           onHttpError: (HttpResponseError error) {
             final code = error.response?.statusCode;
             setState(() {
               _webError = 'HTTP 오류${code != null ? ' ($code)' : ''}';
+              _isLoading = false;
             });
           },
           onWebResourceError: (error) {
             setState(() {
               _webError =
                   '웹페이지 로드 실패 (code: ${error.errorCode})\n${error.description}';
+              _isLoading = false;
             });
           },
           onSslAuthError: (SslAuthError error) {
@@ -137,7 +159,16 @@ class _WebAppPageState extends State<WebAppPage> {
           },
         ),
       );
-    _loadWithDesktopLikeAgent();
+    return c;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = _createController();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadWithPlatformUserAgent();
+    });
   }
 
   Future<void> _applyAndroidWebViewTweaks() async {
@@ -148,9 +179,12 @@ class _WebAppPageState extends State<WebAppPage> {
     await android.setUseWideViewPort(true);
   }
 
-  Future<void> _loadWithDesktopLikeAgent() async {
+  /// iOS는 데스크톱 Chrome UA로 두면 사이트가 잘못 응답·흰 화면만 주는 경우가 있어, 기본(WK) UA를 쓴다.
+  Future<void> _loadWithPlatformUserAgent() async {
     await _applyAndroidWebViewTweaks();
-    await _controller.setUserAgent(_chromeLikeUserAgent);
+    if (Platform.isAndroid) {
+      await _controller.setUserAgent(_chromeLikeUserAgent);
+    }
     await _controller.loadRequest(Uri.parse(widget.url));
   }
 
@@ -161,6 +195,17 @@ class _WebAppPageState extends State<WebAppPage> {
       body: Stack(
         children: [
           WebViewWidget(controller: _controller),
+          if (_isLoading && _webError == null)
+            const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text('불러오는 중…'),
+                ],
+              ),
+            ),
           if (_webError != null)
             Center(
               child: Container(
